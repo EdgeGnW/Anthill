@@ -1,34 +1,8 @@
-/*
-Raylib example file.
-This is an example main file for a simple raylib project.
-Use this as a starting point or replace it with your code.
-
-For a C++ project simply rename the file to .cpp and re-run the build script 
-
--- Copyright (c) 2020-2024 Jeffery Myers
---
---This software is provided "as-is", without any express or implied warranty. In no event 
---will the authors be held liable for any damages arising from the use of this software.
-
---Permission is granted to anyone to use this software for any purpose, including commercial 
---applications, and to alter it and redistribute it freely, subject to the following restrictions:
-
---  1. The origin of this software must not be misrepresented; you must not claim that you 
---  wrote the original software. If you use this software in a product, an acknowledgment 
---  in the product documentation would be appreciated but is not required.
---
---  2. Altered source versions must be plainly marked as such, and must not be misrepresented
---  as being the original software.
---
---  3. This notice may not be removed or altered from any source distribution.
-
-*/
 
 #include "raylib.h"
 #include "raymath.h"
 #include <stdbool.h>
 #include <limits.h>
-
 
 #define SCREEN_WIDTH 1280
 #define SCREEN_HEIGHT 800
@@ -37,64 +11,88 @@ For a C++ project simply rename the file to .cpp and re-run the build script
 #define WORLD_HEIGHT 400
 
 
+//----------------------------------------------------------------------------------
+// Local Variables Definition (local to this module)
+//----------------------------------------------------------------------------------
+Camera camera = { 0 };
+Vector3 cubePosition = { 0 };
 
-static void set_pixels(char *pixels, int x, int y, Color color) {
-	int index = (x + y * WORLD_WIDTH) * 4;
-	pixels[index] = color.r;
-	pixels[index + 1] = color.g;
-	pixels[index + 2] = color.b;
-	pixels[index + 3] = color.a;
-}
+char world_pixels[WORLD_WIDTH * WORLD_HEIGHT * 4];
 
-int main ()
+int food_collected = 0;
+bool show_pheromone = false;
+
+const Vector2 ant_colony_position = {0, 0};
+const int ant_colony_size = 50;
+#define ANTS_AMOUNT 500
+const int ant_width = 2;
+const int ant_height = 2;
+const float ant_speed = 2;
+const float ant_rotation = 0.15;
+const Color ant_color = BLUE;
+const Color ant_food_color = GREEN;
+
+int pheromone_radius = 20;
+int pheromone_counter = 0;
+const int pheromone_intervall = 1;
+const int pheromone_size = 1;
+#define PHEROMONE_LIVETIME 9999
+
+const Vector2 food_position = {400.f, 300.f};
+const int food_amount = 50;
+const Color food_color = RED;
+const int food_spread = 0;
+const int food_size = 1;
+
+enum Objects {
+	PHEROMONE_PURPLE = PHEROMONE_LIVETIME,
+	PHEROMONE_ORANGE = PHEROMONE_LIVETIME * 2,
+	FOOD = PHEROMONE_LIVETIME * 2 + 1,
+	WALL = PHEROMONE_LIVETIME * 2 + 2,
+	COLONY = PHEROMONE_LIVETIME * 2 + 3,
+};
+
+struct Ant {
+	Vector2 position;
+	Vector2 direction;
+	bool has_food;
+};
+
+struct Ant ants[ANTS_AMOUNT];
+enum Objects world[WORLD_WIDTH][WORLD_HEIGHT];
+
+static Texture2D screen_texture;
+
+//----------------------------------------------------------------------------------
+// Local Functions Declaration
+//----------------------------------------------------------------------------------
+static void UpdateDrawFrame(void);          // Update and draw one frame
+static void SetPixels(char*, int, int, Color);
+
+//----------------------------------------------------------------------------------
+// Main entry point
+//----------------------------------------------------------------------------------
+int main()
 {
+    // Initialization
+    //--------------------------------------------------------------------------------------
 
-	char world_pixels[WORLD_WIDTH * WORLD_HEIGHT * 4];
 
-	Vector2 ant_colony_position = {100, 100};
-	int ant_colony_size = 20;
-	int ants_amount = 50;
-	int ant_width = 2;
-	int ant_height = 2;
-	float ant_speed = 2;
-	float ant_rotation = 0.3;
-	Color ant_color = BLUE;
-	Color ant_food_color = GREEN;
+    // Tell the window to use vsync and work on high DPI displays
+	SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_HIGHDPI);
 
-	int pheromone_counter = 0;
-	int pheromone_intervall = 1;
-	int pheromone_size = 1;
-	#define PHEROMONE_LIFETIME 1000000
+    InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Ants");
 
-	Vector2 food_position = {400.f, 300.f};
-	int food_amount = 50;
-	Color food_color = RED;
-	int food_spread = 0;
-	int food_size = 1;
+    Image screen_image = GenImageCellular(WORLD_WIDTH, WORLD_HEIGHT, 1);
+	screen_texture = LoadTextureFromImage(screen_image);
+	UnloadImage(screen_image);
 
-	enum Objects {
-		PHEROMONE_PURPLE = PHEROMONE_LIFETIME,
-		PHEROMONE_ORANGE = PHEROMONE_LIFETIME * 2,
-		FOOD = PHEROMONE_LIFETIME * 2 + 1,
-		WALL = PHEROMONE_LIFETIME * 2 + 2,
-		COLONY = PHEROMONE_LIFETIME * 2 + 3,
-	};
-
-	struct Ant {
-		Vector2 position;
-		Vector2 direction;
-		bool has_food;
-	};
-
-	struct Ant ants[ants_amount];
-
-	for (int i = 0; i < ants_amount; ++i) {
+    for (int i = 0; i < ANTS_AMOUNT; ++i) {
 		ants[i].position = ant_colony_position;
 		ants[i].direction = Vector2One();
 		ants[i].has_food = false;
 	}
 
-	enum Objects world[WORLD_WIDTH][WORLD_HEIGHT];
 	for (int i = 0; i < food_amount; ++i) {
 		for (int j = 0; j < food_amount; ++j) {
 			world[(int) food_position.x + i][(int) food_position.y + j] = FOOD;
@@ -107,26 +105,37 @@ int main ()
 		}
 	}
 
-	// Tell the window to use vsync and work on high DPI displays
-	SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_HIGHDPI);
+    //--------------------------------------------------------------------------------------
 
-	// Create the window and OpenGL context
-	InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, "Ants");
+    SetTargetFPS(60);               // Set our game to run at 60 frames-per-second
+    //--------------------------------------------------------------------------------------
 
-	Image screen_image = GenImageCellular(WORLD_WIDTH, WORLD_HEIGHT, 1);
-	Texture2D screen_texture = LoadTextureFromImage(screen_image);
-	UnloadImage(screen_image);
-	
-	// game loop
-	while (!WindowShouldClose())		// run the loop untill the user presses ESCAPE or presses the Close button on the window
-	{
-		// drawing
-		BeginDrawing();
+    // Main game loop
+    while (!WindowShouldClose())    // Detect window close button or ESC key
+    {
+		if (IsKeyPressed(KEY_ENTER)) show_pheromone = !show_pheromone;
+        UpdateDrawFrame();
+    }
 
-		// Setup the back buffer for drawing (clear color and depth buffers)
-		ClearBackground(BLACK);
 
-		bool pheromone_now = false;
+    // De-Initialization
+    //--------------------------------------------------------------------------------------
+    CloseWindow();                  // Close window and OpenGL context
+    //--------------------------------------------------------------------------------------
+
+    return 0;
+}
+
+// Update and draw game frame
+static void UpdateDrawFrame(void)
+{
+    // Draw
+    //----------------------------------------------------------------------------------
+    BeginDrawing();
+
+    ClearBackground(BLANK);
+
+        bool pheromone_now = false;
 		++pheromone_counter;
 		if (pheromone_counter >= pheromone_intervall) {
 			pheromone_now = true;
@@ -137,7 +146,7 @@ int main ()
 		for (int i = 0; i < WORLD_WIDTH; ++i) {
 			for (int j = 0; j < WORLD_HEIGHT; ++j) {
 				if (!world[i][j]) {
-					set_pixels(world_pixels, i, j, BLACK);
+					SetPixels(world_pixels, i, j, BLANK);
 					continue;
 				}
 				Color color;
@@ -147,55 +156,101 @@ int main ()
 					case FOOD: color = food_color; break;
 					case COLONY: color = LIME; break;
 					case 1 ... PHEROMONE_PURPLE: 
-						color = PURPLE;
+						color = show_pheromone ? ColorBrightness(PURPLE, ((float)(*world_ptr % PHEROMONE_LIVETIME)) / PHEROMONE_LIVETIME - 1) : BLACK;
 						size = pheromone_size;
-						if (pheromone_now) *world_ptr -= 1;
+						if (pheromone_now) --*world_ptr;
 						break;
 					case PHEROMONE_PURPLE + 1 ... PHEROMONE_ORANGE: 
-						color = ORANGE;
+						color = show_pheromone ? ColorBrightness(ORANGE, ((float)(*world_ptr % PHEROMONE_LIVETIME)) / PHEROMONE_LIVETIME - 1) : BLACK;
 						size = pheromone_size;
-						if (pheromone_now) {
-							*world_ptr = *world_ptr <= PHEROMONE_PURPLE + 1 ? 0 : *world_ptr - 1;
+						if (pheromone_now && --*world_ptr <= PHEROMONE_PURPLE) {
+							*world_ptr = 0;
 						}
 						break;
 					default: color = GRAY;
 				} 
-				set_pixels(world_pixels, i, j, color);
+				SetPixels(world_pixels, i, j, color);
 			}
 		}
 
-		for (int i = 0; i < ants_amount; ++i) {
-			enum Objects *world_ptr = &world[(int) ants[i].position.x][(int) ants[i].position.y];
+		for (int i = 0; i < ANTS_AMOUNT; ++i) {
+            struct Ant *ant_ptr = &ants[i];
+			enum Objects *world_ptr = &world[(int) ant_ptr->position.x][(int) ant_ptr->position.y];
 			if (pheromone_now && *world_ptr <= PHEROMONE_ORANGE) {
-				*world_ptr = ants[i].has_food ? PHEROMONE_ORANGE : PHEROMONE_PURPLE;
+				int current_pheromone = ant_ptr->has_food ? PHEROMONE_ORANGE : PHEROMONE_PURPLE;
+				int a = (*world_ptr <= current_pheromone && *world_ptr > current_pheromone - PHEROMONE_LIVETIME) ? *world_ptr : current_pheromone - PHEROMONE_LIVETIME;
+				*world_ptr = a + PHEROMONE_LIVETIME / 20;
+				if (*world_ptr > current_pheromone) *world_ptr = current_pheromone;
 			}
+
 			if (GetRandomValue(0, 1)) {
-				ants[i].direction = Vector2Normalize(Vector2Rotate(ants[i].direction, GetRandomValue(-1, 1) * ant_rotation));
+				ant_ptr->direction = Vector2Normalize(Vector2Rotate(ant_ptr->direction, GetRandomValue(-1, 1) * ant_rotation));
 			}
-			if (*world_ptr == FOOD && !ants[i].has_food) {
-				ants[i].has_food = true;
+
+            int half_radius = pheromone_radius / 2;
+
+			bool grab_food = false;
+            Vector2 pheromone_vector = Vector2Zero();
+            for (int x = (int)ant_ptr->position.x - half_radius; x < (int)ant_ptr->position.x + half_radius && !grab_food; ++x) {
+                if (x < 0 || x >= WORLD_WIDTH) continue;
+                for (int y = (int)ant_ptr->position.y - half_radius; y < (int)ant_ptr->position.y + half_radius; ++y) {
+					if ((world[x][y] == FOOD && !ant_ptr->has_food || world[x][y] == COLONY && ant_ptr->has_food) && Vector2LengthSqr((Vector2) {x, y}) <= 3) {
+						grab_food = true;
+						ant_ptr->position = (Vector2) {x, y};
+						*world_ptr = world[x][y];
+						break;
+					}
+                    if (y < 0 || y >= WORLD_HEIGHT || (x == ant_ptr->position.x && y == ant_ptr->position.y) || !world[x][y]) continue;
+                    if ((((world[x][y] >PHEROMONE_PURPLE && world[x][y] <= PHEROMONE_ORANGE) || world[x][y] == FOOD) && !ant_ptr->has_food)
+                    || ((world[x][y] <= PHEROMONE_PURPLE || world[x][y] == COLONY) && ant_ptr->has_food)) {
+                        Vector2 dist_vec = Vector2Subtract((Vector2) {.x = x, .y = y}, ant_ptr->position);
+						//(if (Vector2LengthSqr(dist_vec) > pheromone_radius) continue;
+                        if (Vector2DotProduct(ant_ptr->direction, dist_vec) < -0.5) continue; 
+						int factor = world[x][y] < FOOD ? world[x][y] % PHEROMONE_LIVETIME : PHEROMONE_LIVETIME * pheromone_radius;
+                        pheromone_vector = Vector2Add(pheromone_vector, Vector2Scale(Vector2Normalize(dist_vec), factor));
+                    }
+                }
+            }
+
+            if (Vector2LengthSqr(pheromone_vector) > pheromone_radius * 0.5) {
+                ant_ptr->direction = Vector2Normalize(Vector2Add(ant_ptr->direction, Vector2Normalize(pheromone_vector)));
+            }
+            
+
+			if (*world_ptr == FOOD && !ant_ptr->has_food) {
+				ant_ptr->has_food = true;
+                ant_ptr->direction = Vector2Negate(ant_ptr->direction);
 				*world_ptr = 0;
+			} else if (*world_ptr == COLONY && ant_ptr->has_food) {
+				ant_ptr->has_food = false;
+				++food_collected;
+                ant_ptr->direction = Vector2Negate(ant_ptr->direction);
 			}
-			ants[i].position = Vector2Clamp(Vector2Add(ants[i].position, Vector2Scale(ants[i].direction, ant_speed)),
+			ant_ptr->position = Vector2Clamp(Vector2Add(ant_ptr->position, Vector2Scale(ant_ptr->direction, ant_speed)),
 							Vector2Zero(),
 							(Vector2) {WORLD_WIDTH - 1, WORLD_HEIGHT - 1});
-			set_pixels(world_pixels, ants[i].position.x, ants[i].position.y, ants[i].has_food ? ant_food_color : ant_color);
+
+            if (ant_ptr->position.x <= 0 || ant_ptr->position.x >= WORLD_WIDTH - 1) ant_ptr->direction.x *= -1;
+            if (ant_ptr->position.y <= 0 || ant_ptr->position.y >= WORLD_HEIGHT - 1) ant_ptr->direction.y *= -1;
+
+			SetPixels(world_pixels, ant_ptr->position.x, ant_ptr->position.y, ant_ptr->has_food ? ant_food_color : ant_color);
 		}
 
 		UpdateTexture(screen_texture, world_pixels);
 		DrawTextureEx(screen_texture, Vector2Zero(), 0, 2, WHITE);
 
-		// draw some text using the default font
-		DrawText("Fucking Ants", 20,20,20,WHITE);
+		DrawText(TextFormat("Food Collected: %i", food_collected), 20 , 20, 20, RAYWHITE);
 
-		DrawFPS(SCREEN_WIDTH - 200, 20);  
-		
-		// end the frame and get ready for the next one  (display frame, poll input, etc...)
-		EndDrawing();
-	}
+		DrawFPS(SCREEN_WIDTH - 200, 20);
 
+    EndDrawing();
+    //----------------------------------------------------------------------------------
+}
 
-	// destroy the window and cleanup the OpenGL context
-	CloseWindow();
-	return 0;
+static void SetPixels(char *pixels, int x, int y, Color color) {
+	int index = (x + y * WORLD_WIDTH) * 4;
+	pixels[index] = color.r;
+	pixels[index + 1] = color.g;
+	pixels[index + 2] = color.b;
+	pixels[index + 3] = color.a;
 }
